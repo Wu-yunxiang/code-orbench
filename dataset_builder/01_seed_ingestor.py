@@ -8,7 +8,7 @@ def load_and_filter_seeds(input_path, output_path, target_task="text-to-code gen
     and exports a flattened JSON that can be consumed by the rewriter.
     """
     if exclude_levels is None:
-        exclude_levels = [3] # Exclude jailbreak levels by default to keep pure intent
+        exclude_levels = [3] # Exclude level 3 by default
 
     with open(input_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
