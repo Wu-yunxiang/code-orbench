@@ -1,45 +1,5 @@
-# 排除参考文献和论文参考代码等源文件，保持本项目仓库精简
-references/
-
-# 排除 Python 编译与缓存文件
+dataset/
+debug/
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-
-# 排除虚拟环境目录
-venv/
+*.pyc
 .env
-.venv
-env/
-
-# IDE 与编辑器临时/缓存配置
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# 排除系统级和本地运行日志
-*.log
-.DS_Store
-
-# 生成的数据集(如果不想上传的话可以取消注释)
-# dataset/
-
-# 构建分发产物
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
