@@ -2,6 +2,7 @@ import os
 import json
 import re
 import argparse
+import httpx
 from tqdm import tqdm
 
 # Pseudo-client structure assuming an OpenAI-compatible endpoint for the Mixtral-8x22B model
@@ -87,11 +88,21 @@ class CodeIntentRewriter:
             return []
 
 def main(input_path, output_path, api_key, base_url, model):
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    client = OpenAI(
+        api_key=api_key, 
+        base_url=base_url,
+        http_client=httpx.Client(
+            base_url=base_url,
+            follow_redirects=True,
+        ),
+    )
     rewriter = CodeIntentRewriter(client, model)
     
     with open(input_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
+        
+    # Test only the first 5 items to verify effectiveness and token consumption
+    data = data[:5]
         
     rewritten_data = []
     already_generated = set()
@@ -121,7 +132,7 @@ if __name__ == "__main__":
     parser.add_argument("--input", default="./dataset/01_filtered_seeds.json")
     parser.add_argument("--output", default="./dataset/02_rewritten_seeds.json")
     parser.add_argument("--api-key", default=os.getenv("MIXTRAL_API_KEY", "dummy"), help="API Key for Mixtral Rewriter")
-    parser.add_argument("--base-url", default=os.getenv("MIXTRAL_BASE_URL", "https://api.xty.app/v1"), help="Base URL for Mixtral Endpoint")
+    parser.add_argument("--base-url", default=os.getenv("MIXTRAL_BASE_URL", "https://svip.xty.app/v1"), help="Base URL for Mixtral Endpoint")
     parser.add_argument("--model", default="mixtral-8x22b-instruct-v0.1")
     args = parser.parse_args()
     
