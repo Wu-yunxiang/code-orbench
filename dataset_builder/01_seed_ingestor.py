@@ -31,6 +31,7 @@ def load_and_filter_seeds(input_path, output_path, target_task="text-to-code gen
             "original_prompt": item["prompt"],
             "malicious_functionality": item.get("malicious functionality", "Unknown"),
             "category": item.get("category", "Unknown"),
+            "malicious_category": item.get("malicious categories", "Unknown"),
             "level": item.get("level", 1)
         })
         
@@ -46,7 +47,7 @@ def load_and_filter_seeds(input_path, output_path, target_task="text-to-code gen
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ingest and filter toxic code seeds.")
-    parser.add_argument("--input", default="../toxic_seeds/prompt.json", help="Path to raw prompt.json")
+    parser.add_argument("--input", default="./toxic_seeds/prompt.json", help="Path to raw prompt.json")
     parser.add_argument("--output", default="./dataset/01_filtered_seeds.json", help="Path to output json")
     args = parser.parse_args()
     
