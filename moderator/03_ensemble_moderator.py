@@ -70,10 +70,15 @@ def debate_moderator(item, client, models, judge_model, max_rounds=3):
         round_dict = {}
         labels_dict = {}
         
-        for m in models:
+        # 并发执行当前轮次的所有模型请求
+        import concurrent.futures
+        
+        def run_model(m):
             if r == 0:
-                model_messages[m].append({"role": "system", "content": sys_prompt_template.format(model_name=m)})
-                model_messages[m].append({"role": "user", "content": f"Please evaluate the following request:\n{context}"})
+                msgs = [
+                    {"role": "system", "content": sys_prompt_template.format(model_name=m)},
+                    {"role": "user", "content": f"Please evaluate the following request:\n{context}"}
+                ]
             else:
                 user_content = (
                     "Review the arguments provided by other auditors in the previous round.\n"
@@ -89,17 +94,25 @@ def debate_moderator(item, client, models, judge_model, max_rounds=3):
                         debate_context += f"[{other_m}]:\n{other_arg}\n\n"
                         
                 user_content += debate_context
-                model_messages[m].append({"role": "user", "content": user_content})
-                
-            reply = run_inference(client, m, model_messages[m], temperature=0.0)
-            model_messages[m].append({"role": "assistant", "content": reply})
+                msgs = model_messages[m] + [{"role": "user", "content": user_content}]
             
-            ext_label = extract_label(reply)
-            if ext_label == "INVALID":
-                return {"status": "abandoned", "reason": f"Model {m} format invalid at round {r}", "item": item}
+            reply = run_inference(client, m, msgs, temperature=0.0)
+            return m, reply, msgs
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(models)) as executor:
+            future_to_model = {executor.submit(run_model, m): m for m in models}
+            for future in concurrent.futures.as_completed(future_to_model):
+                m, reply, msgs = future.result()
                 
-            round_dict[m] = reply
-            labels_dict[m] = ext_label
+                # 更新模型消息记录以保持完整的对话上下文
+                model_messages[m] = msgs + [{"role": "assistant", "content": reply}]
+                
+                ext_label = extract_label(reply)
+                if ext_label == "INVALID":
+                    return {"status": "abandoned", "reason": f"Model {m} format invalid at round {r}", "item": item}
+                    
+                round_dict[m] = reply
+                labels_dict[m] = ext_label
             
         history.append(round_dict)
         
