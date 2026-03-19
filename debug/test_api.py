@@ -6,7 +6,7 @@ import os
 def test_api_connectivity():
     api_key = "sk-dlzLGhbWtT9j4OjPSC2C4FslWcXcFNIuYpROALEcc06Oqq7Q"
     base_url = "https://svip.xty.app/v1"
-    model = "gpt-3.5-turbo" # 先用最基础的模型测试 Key 的权限
+    model = "gemini-3.1-pro-preview-thinking" # 先用最基础的模型测试 Key 的权限
 
     print(f"Testing connectivity to {base_url} with model {model}...")
 

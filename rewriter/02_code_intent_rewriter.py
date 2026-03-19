@@ -9,7 +9,7 @@ from tqdm import tqdm
 from openai import OpenAI
 
 class CodeIntentRewriter:
-    def __init__(self, client, model_name="gpt-5.4"):
+    def __init__(self, client, model_name):
         self.client = client
         self.model_name = model_name
 
@@ -103,7 +103,7 @@ def main(input_path, output_path, api_key, base_url, model):
         data = json.load(f)
         
     # Test only the first 5 items to verify effectiveness and token consumption
-    data = data[:5]
+    # data = data[:5]
         
     rewritten_data = []
     already_generated = set()
@@ -131,10 +131,10 @@ def main(input_path, output_path, api_key, base_url, model):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", default="./dataset/01_filtered_seeds.json")
-    parser.add_argument("--output", default="./dataset/02_rewritten_seeds.json")
+    parser.add_argument("--output", default="./dataset/02_rewritten_records.json")
     parser.add_argument("--api-key", default=os.getenv("API_KEY", "dummy"), help="API Key for Rewriter")
     parser.add_argument("--base-url", default=os.getenv("BASE_URL", "https://svip.xty.app/v1"), help="Base URL for Endpoint")
-    parser.add_argument("--model", default="gpt-5.4")
+    parser.add_argument("--model", default="claude-opus-4-6-thinking")
     args = parser.parse_args()
     
     main(args.input, args.output, args.api_key, args.base_url, args.model)
