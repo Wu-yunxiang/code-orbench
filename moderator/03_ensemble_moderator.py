@@ -173,109 +173,157 @@ def process_data(input_path, output_dir, api_key, base_url, max_rounds):
     models = ["gpt-5.4", "gemini-3.1-pro-preview-thinking", "claude-opus-4-6-thinking"]
     judge = "gemini-3.1-pro-preview-thinking"
     
-    benign_records = []
-    malicious_records = []
+    os.makedirs(output_dir, exist_ok=True)
     
-    # 详细统计用
-    # stats = { round_idx: {"benign": count, "malicious": count, "abandoned": count}, "judge": {...} }
     stats = {}
     for r in range(max_rounds):
         stats[str(r)] = {"benign": 0, "malicious": 0, "abandoned": 0}
     stats["judge"] = {"benign": 0, "malicious": 0, "abandoned": 0}
     
-    # 用于记录每条记录的处理概况
-    moderation_logs = []
+    # 因为 PID 在展开后的数据中可能重复（一个 pid 对应 5 个改写结果），
+    # 用 record_index 来确保唯一性。
+    processed_keys = set()
     
-    for idx, item in enumerate(tqdm(data, desc="Moderating Debates"), 1):
-        result = debate_moderator(item, client, models, judge, max_rounds)
-        
-        entry_log = {
-            "record_index": idx,
-            "pid": item.get("pid"),
-            "status": result["status"]
-        }
-
-        if result["status"] == "abandoned":
-            reason = result["reason"]
-            
-            # 确定是在哪一轮或法官处被废弃
-            if "Judge" in reason:
-                stats["judge"]["abandoned"] += 1
-            else:
-                # 假设 reason 格式包含 "round X"
-                import re
-                match = re.search(r"round (\d+)", reason)
-                if match:
-                    stats[match.group(1)]["abandoned"] += 1
-            
-            moderation_logs.append(entry_log)
-            continue
-            
-        final_label = result["final_label"]
-        processed_item = result["item"]
-        debate_info = processed_item["debate_info"]
-        
-        entry_log["final_label"] = final_label
-        entry_log["required_judge"] = debate_info["required_judge"]
-
-        if debate_info["required_judge"]:
-            stats["judge"][final_label] += 1
-        else:
-            r_idx = str(debate_info["consensus_round"])
-            stats[r_idx][final_label] += 1
-            entry_log["consensus_round"] = int(r_idx)
-
-        moderation_logs.append(entry_log)
-
-        if final_label == "benign":
-            benign_records.append(processed_item)
-        elif final_label == "malicious":
-            malicious_records.append(processed_item)
-
-    # 格式化报告
-    total_abandoned = sum(s["abandoned"] for s in stats.values())
-    report = []
-    report.append("=== Moderation Comprehensive Report ===")
-    report.append(f"Total Initial Entries: {len(data)}")
-    report.append(f"Successfully Processed: {len(benign_records) + len(malicious_records)}")
-    report.append(f"Abandoned Entries    : {total_abandoned}")
-    report.append("-" * 40)
-    
-    report.append("\n[Stage-wise Statistics (Consensus & Abandonment)]")
-    for stage in sorted(stats.keys(), key=lambda x: (0, int(x)) if x.isdigit() else (1, x)):
-        s = stats[stage]
-        total_stage = s["benign"] + s["malicious"] + s["abandoned"]
-        stage_name = f"Round {stage}" if stage.isdigit() else "Final Judge"
-        report.append(f"{stage_name}: {total_stage} total (Benign: {s['benign']}, Malicious: {s['malicious']}, Abandoned: {s['abandoned']})")
-    
-    report.append("\n[Final Distribution]")
-    report.append(f"Final Benign (Safe)  : {len(benign_records)}")
-    report.append(f"Final Malicious      : {len(malicious_records)}")
-    
-    report_text = "\n".join(report)
-    print("\n" + report_text)
-    
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # 写入文件
+    # 尝试从现有文件恢复进度，为了高效处理，采用逐行 JSON (JSONL) 增量追加方式
     paths = {
-        "benign": os.path.join(output_dir, "03_benign_records.json"),
-        "malicious": os.path.join(output_dir, "03_malicious_records.json"),
-        "logs": os.path.join(output_dir, "03_moderation_logs.json"),
+        "benign": os.path.join(output_dir, "03_benign_records.jsonl"),
+        "malicious": os.path.join(output_dir, "03_malicious_records.jsonl"),
+        "logs": os.path.join(output_dir, "03_moderation_logs.jsonl"),
         "report": os.path.join(output_dir, "03_moderation_report.txt")
     }
-    
-    with open(paths["benign"], 'w', encoding='utf-8') as f:
-        json.dump(benign_records, f, indent=4, ensure_ascii=False)
-    with open(paths["malicious"], 'w', encoding='utf-8') as f:
-        json.dump(malicious_records, f, indent=4, ensure_ascii=False)
-    with open(paths["logs"], 'w', encoding='utf-8') as f:
-        json.dump(moderation_logs, f, indent=4, ensure_ascii=False)
-    with open(paths["report"], 'w', encoding='utf-8') as f:
-        f.write(report_text)
-        
-    print(f"\nResults saved to {output_dir}")
 
+    def update_report_file():
+        total_abandoned = sum(s["abandoned"] for s in stats.values())
+        report = []
+        report.append("=== Moderation Comprehensive Report ===")
+        report.append(f"Total Initial Entries: {len(data)}")
+        total_stats_benign = sum(s["benign"] for s in stats.values())
+        total_stats_mal = sum(s["malicious"] for s in stats.values())
+        report.append(f"Successfully Processed (Accumulated): {total_stats_benign + total_stats_mal}")
+        report.append(f"Abandoned Entries    (Accumulated): {total_abandoned}")
+        report.append("-" * 40)
+        
+        report.append("\n[Stage-wise Statistics (Consensus & Abandonment)]")
+        for stage in sorted(stats.keys(), key=lambda x: (0, int(x)) if x.isdigit() else (1, x)):
+            s = stats[stage]
+            total_stage = s["benign"] + s["malicious"] + s["abandoned"]
+            stage_name = f"Round {stage}" if stage.isdigit() else "Final Judge"
+            report.append(f"{stage_name}: {total_stage} total (Benign: {s['benign']}, Malicious: {s['malicious']}, Abandoned: {s['abandoned']})")
+        
+        report.append("\n[Final Distribution (Accumulated)]")
+        report.append(f"Final Benign (Safe)  : {total_stats_benign}")
+        report.append(f"Final Malicious      : {total_stats_mal}")
+        
+        rpt_text = "\n".join(report)
+        with open(paths["report"], 'w', encoding='utf-8') as f:
+            f.write(rpt_text)
+        return rpt_text
+
+    if os.path.exists(paths["logs"]):
+        print("Found existing checkpoint records, resuming...")
+        try:
+            with open(paths["logs"], 'r', encoding='utf-8') as f:
+                for line in f:
+                    if not line.strip(): continue
+                    log = json.loads(line)
+                    # 直接使用 record_index 作为去重主键
+                    processed_keys.add(log.get('record_index'))
+                    
+                    st = log.get("status")
+                    if st == "abandoned":
+                        reason = log.get("reason", "")
+                        if "Judge" in reason:
+                            stats["judge"]["abandoned"] += 1
+                        else:
+                            import re
+                            match = re.search(r"round (\d+)", reason)
+                            if match:
+                                stats[match.group(1)]["abandoned"] += 1
+                            else:
+                                stats["judge"]["abandoned"] += 1
+                    elif st == "success":
+                        lbl = log.get("final_label")
+                        req_j = log.get("required_judge", False)
+                        if req_j:
+                            stats["judge"][lbl] += 1
+                        else:
+                            r_idx = str(log.get("consensus_round"))
+                            stats[r_idx][lbl] += 1
+            print(f"Resuming finished. Skipped {len(processed_keys)} previously processed records.")
+        except Exception as e:
+            print(f"Error loading checkpoints: {e}")
+            
+    # 为了保证效率，我们改用追加写入 (.jsonl格式)，这去掉了庞大的全量覆盖IO
+    log_f = open(paths["logs"], 'a', encoding='utf-8')
+    benign_f = open(paths["benign"], 'a', encoding='utf-8')
+    malicious_f = open(paths["malicious"], 'a', encoding='utf-8')
+    
+    # 提前初始化并保存当前结果报告，避免断点全量跳过时 report_text 抛 NameError
+    report_text = update_report_file()
+
+    try:
+        for idx, item in enumerate(tqdm(data, desc="Moderating Debates"), 1):
+            if idx in processed_keys:
+                continue
+                
+            result = debate_moderator(item, client, models, judge, max_rounds)
+            
+            entry_log = {
+                "record_index": idx,
+                "pid": item.get("pid"),
+                "status": result["status"]
+            }
+
+            if result["status"] == "abandoned":
+                reason = result["reason"]
+                entry_log["reason"] = reason 
+                
+                if "Judge" in reason:
+                    stats["judge"]["abandoned"] += 1
+                else:
+                    import re
+                    match = re.search(r"round (\d+)", reason)
+                    if match:
+                        stats[match.group(1)]["abandoned"] += 1
+                
+                log_f.write(json.dumps(entry_log, ensure_ascii=False) + "\n")
+                log_f.flush()
+                continue
+                
+            final_label = result["final_label"]
+            processed_item = result["item"]
+            debate_info = processed_item["debate_info"]
+            
+            entry_log["final_label"] = final_label
+            entry_log["required_judge"] = debate_info["required_judge"]
+
+            if debate_info["required_judge"]:
+                stats["judge"][final_label] += 1
+            else:
+                r_idx = str(debate_info["consensus_round"])
+                stats[r_idx][final_label] += 1
+                entry_log["consensus_round"] = int(r_idx)
+
+            log_f.write(json.dumps(entry_log, ensure_ascii=False) + "\n")
+            log_f.flush()
+
+            if final_label == "benign":
+                benign_f.write(json.dumps(processed_item, ensure_ascii=False) + "\n")
+                benign_f.flush()
+            elif final_label == "malicious":
+                malicious_f.write(json.dumps(processed_item, ensure_ascii=False) + "\n")
+                malicious_f.flush()
+
+            # 每次成功处理一条，实时更新报告
+            report_text = update_report_file()
+                
+    finally:
+        log_f.close()
+        benign_f.close()
+        malicious_f.close()
+
+    print("\n" + report_text)
+    print(f"\nAll moderation tasks completely finished! Final results safely saved in {output_dir}")
 
 
 if __name__ == "__main__":
