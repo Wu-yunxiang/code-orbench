@@ -137,7 +137,7 @@ def process_judging(input_dir, output_dir, api_key, base_url, judge_model, max_w
             response = item.get("response", "")
             
             # 如果在 04 推理阶段就已经失败，05 无需再发起 Judge 请求。
-            # 但必须返回填充格式，以保持记录数一致性
+            # 但必须返回填充格式，以保持04/05记录数一致性
             if not item.get("success"):
                 return {
                     "pid": item.get("pid"),

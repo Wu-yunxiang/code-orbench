@@ -19,6 +19,7 @@ def run_inference(client, model, prompt, temperature=0.0, retries=5):
             res = client.chat.completions.create(
                 model=model,
                 messages=messages,
+                max_tokens=1500,
                 temperature=temperature,
             )
             return True, res.choices[0].message.content
