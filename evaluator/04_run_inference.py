@@ -2,58 +2,114 @@ import json
 import os
 import argparse
 from tqdm import tqdm
-import sys
+import httpx
+from openai import OpenAI
+import concurrent.futures
 
-# adding root to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from core.output_parser import strip_think_tags
+# 静态定义的待测模型列表
+TARGET_MODELS = [
+    "claude-3-sonnet"
+]
 
-# Dummy API function placeholders. In actual implementation, you would call OpenAI, Anthropic, Gemini, etc.
-def run_model_inference(prompt, model_name):
-    """
-    Mock inference function. 
-    Replace with actual target model API calls for DeepSeek, Qwen, Claude, GPT, Gemini.
-    """
-    # ... actual API calling logic here ...
-    # Return raw text response
-    return f"Mock response for {prompt} from {model_name}"
+def run_inference(client, model, prompt, temperature=0.0, retries=5):
+    import time
+    messages = [{"role": "user", "content": prompt}]
+    for i in range(retries):
+        try:
+            res = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+            )
+            return True, res.choices[0].message.content
+        except Exception as e:
+            if i == retries - 1:
+                return False, f"Error: {str(e)}"
+            time.sleep(2 ** (i + 1))
 
-def main(input_path, output_dir, model_name):
-    print(f"Running Inference for {model_name}")
-    with open(input_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-        
-    results = []
+def process_inference(input_file, output_dir, api_key, base_url, max_workers):
+    print(f"Loading objective benign records from: {input_file}")
     
-    for item in tqdm(data, desc=f"Evaluating {model_name}"):
-        prompt = item["rewritten_prompt"]
-        
-        # 1. Get raw model response
-        raw_response = run_model_inference(prompt, model_name)
-        
-        # 2. Key Step: Clean the response of thinking processes (DeepSeek-R1 / Qwen 3.5 specific)
-        cleaned_response = strip_think_tags(raw_response)
-        
-        # 3. Store result
-        result_item = item.copy()
-        result_item["eval_model"] = model_name
-        result_item["raw_response"] = raw_response
-        result_item["cleaned_response"] = cleaned_response
-        
-        results.append(result_item)
-        
+    client = OpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        http_client=httpx.Client(follow_redirects=True, base_url=base_url)
+    )
+
     os.makedirs(output_dir, exist_ok=True)
-    out_file = os.path.join(output_dir, f"{model_name}_results.json")
-    with open(out_file, 'w', encoding='utf-8') as f:
-        json.dump(results, f, indent=4, ensure_ascii=False)
-    
-    print(f"Saved {model_name} execution to {out_file}")
+
+    for model in TARGET_MODELS:
+        print(f"\n=== Starting Inference for Model: {model} ===")
+        # 每个模型单独生成自身名字的 jsonl 文件
+        output_file = os.path.join(output_dir, f"{model}.jsonl")
+        
+        processed_count = 0
+        if os.path.exists(output_file):
+            with open(output_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.strip():
+                        processed_count += 1
+            print(f"Found existing checkpoint for {model}. Skipped {processed_count} records.")
+
+        f_out = open(output_file, 'a', encoding='utf-8')
+        success_count = 0
+        error_count = 0
+
+        # 直接流式读取输入文件进行处理，跳过前 processed_count 个有效行
+        tasks = []
+        with open(input_file, 'r', encoding='utf-8') as f:
+            valid_idx = 0
+            for line in f:
+                if not line.strip():
+                    continue
+                if valid_idx < processed_count:
+                    valid_idx += 1
+                    continue
+                item = json.loads(line)
+                tasks.append(item)
+
+        if not tasks:
+            print(f"All records already processed for {model}.")
+            f_out.close()
+            continue
+
+        def process_item(item):
+            prompt = item.get("rewritten_prompt", "")
+            success, response_text = run_inference(client, model, prompt)
+            
+            return {
+                "pid": item.get("pid"),
+                "rewritten_prompt": prompt,
+                "target_model": model,
+                "success": success,
+                "response": response_text
+            }
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {executor.submit(process_item, r): r for r in tasks}
+                for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc=f"Inferencing [ {model} ]"):
+                    result = future.result()
+                    if result["success"]:
+                        success_count += 1
+                    else:
+                        error_count += 1
+                    f_out.write(json.dumps(result, ensure_ascii=False) + "\n")
+                    f_out.flush()
+        finally:
+            f_out.close()
+        
+        print(f"Phase 04 Inference for {model} Completed. Success: {success_count}, Errors: {error_count}")
+        print(f"Results saved to {output_file}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", default="./dataset/05_moderated_safe_seeds.json")
-    parser.add_argument("--output-dir", default="./dataset/eval_outputs/")
-    parser.add_argument("--model", required=True, help="Model name (e.g. deepseek-r1, claude-4-6-opus-20260228)")
+    parser.add_argument("--input", default="./dataset/03_benign_records.jsonl")
+    parser.add_argument("--output-dir", default="./dataset/04_inference")
+    parser.add_argument("--api-key", default=os.getenv("API_KEY", "dummy"))
+    parser.add_argument("--base-url", default=os.getenv("BASE_URL", "https://svip.xty.app/v1"))
+    parser.add_argument("--max-workers", type=int, default=5)
     args = parser.parse_args()
     
-    main(args.input, args.output_dir, args.model)
+    process_inference(args.input, args.output_dir, args.api_key, args.base_url, args.max_workers)
