@@ -8,7 +8,13 @@ import concurrent.futures
 
 # 静态定义的待测模型列表
 TARGET_MODELS = [
-    "claude-3-sonnet"
+    "claude-3-sonnet-20240229", 
+    "gpt-5.2",
+    "qwen2-7b-instruct",
+    "qwen3-8b",
+    "llama2-7b",
+    "llama3-8b",
+    "llama-3.2-11b-vision-instruct"
 ]
 
 def run_inference(client, model, prompt, temperature=0.0, retries=5):
@@ -19,7 +25,7 @@ def run_inference(client, model, prompt, temperature=0.0, retries=5):
             res = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                max_tokens=1500,
+                max_tokens=1000,
                 temperature=temperature,
             )
             return True, res.choices[0].message.content
@@ -56,18 +62,29 @@ def process_inference(input_file, output_dir, api_key, base_url, max_workers):
         success_count = 0
         error_count = 0
 
-        # 直接流式读取输入文件进行处理，跳过前 processed_count 个有效行
+        # 支持 JSONL 和普通的 JSON 列表
+        all_tasks = []
+        if input_file.endswith('.jsonl'):
+            with open(input_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.strip():
+                        all_tasks.append(json.loads(line))
+        else:
+            with open(input_file, 'r', encoding='utf-8') as f:
+                all_tasks = json.load(f)
+
         tasks = []
-        with open(input_file, 'r', encoding='utf-8') as f:
-            valid_idx = 0
-            for line in f:
-                if not line.strip():
-                    continue
-                if valid_idx < processed_count:
-                    valid_idx += 1
-                    continue
-                item = json.loads(line)
-                tasks.append(item)
+        # 取消注释执行完整运行 ===
+        valid_idx = 0
+        for item in all_tasks:
+            if valid_idx >= 85: # 测试版限制 (如需跑全量可注释这行和下行)
+                break
+            if valid_idx < processed_count:
+                valid_idx += 1
+                continue
+            tasks.append(item)
+            valid_idx += 1
+        # === END DEBUG ===
 
         if not tasks:
             print(f"All records already processed for {model}.")
@@ -75,7 +92,8 @@ def process_inference(input_file, output_dir, api_key, base_url, max_workers):
             continue
 
         def process_item(item):
-            prompt = item.get("rewritten_prompt", "")
+            # 兼容两种数据集的字段名称
+            prompt = item.get("rewritten_prompt", item.get("prompt", ""))
             success, response_text = run_inference(client, model, prompt)
             
             return {
