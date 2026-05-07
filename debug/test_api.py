@@ -36,9 +36,11 @@ def test_api_connectivity(model, prompt, api_key, base_url):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="llama2-7b")
+    parser.add_argument("--model", default="gpt-4o-mini")
     parser.add_argument("--prompt", default=DEFAULT_PROMPT)
-    parser.add_argument("--api-key", default=os.getenv("API_KEY", "sk-dlzLGhbWtT9j4OjPSC2C4FslWcXcFNIuYpROALEcc06Oqq7Q"))
+    parser.add_argument("--api-key", default=os.getenv("API_KEY"))
     parser.add_argument("--base-url", default=os.getenv("BASE_URL", "https://svip.xty.app/v1"))
     args = parser.parse_args()
+    if not args.api_key:
+        raise SystemExit("Missing API key. Pass --api-key or set API_KEY.")
     test_api_connectivity(args.model, args.prompt, args.api_key, args.base_url)

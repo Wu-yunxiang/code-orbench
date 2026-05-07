@@ -1,0 +1,22 @@
+\begin{table*}[t]
+\centering
+\scriptsize
+\caption{System-prompt and safety-wrapper ablation on 100 \benchmark prompts and 50 toxic-control prompts. Each cell reports ORR/TRR in percent.}
+\label{tab:system_wrapper}
+\begin{tabular}{lrrrr}
+\toprule
+Model & Raw & Generic safety & Defensive-code-aware & $\Delta$ gap \\
+\midrule
+\texttt{claude-haiku-4-5} & 0/36 & 38/78 & 1/64 & +27 \\
+\texttt{gemini-3.1-pro-thinking} & 5/72 & 23/76 & 0/74 & +7 \\
+\texttt{deepseek-v3.2} & 0/60 & 0/80 & 0/72 & +12 \\
+\texttt{glm-5} & 12/66 & 12/78 & 0/74 & +20 \\
+\texttt{gpt-5.2} & 61/82 & 65/80 & 1/86 & +64 \\
+\texttt{grok-4} & 57/50 & 83/68 & 4/56 & +59 \\
+\texttt{llama-3.3-70b} & 0/8 & 1/62 & 0/16 & +8 \\
+\texttt{qwen3-coder-plus} & 79/84 & 100/90 & 64/90 & +21 \\
+\midrule
+Mean $\Delta$ vs. raw & -- & +13.50/+19.25 & -18.00/+9.25 & +27.25 \\
+\bottomrule
+\end{tabular}
+\end{table*}

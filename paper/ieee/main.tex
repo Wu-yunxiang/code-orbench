@@ -1,0 +1,486 @@
+\documentclass[conference]{IEEEtran}
+
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{url}
+\usepackage{xcolor}
+
+\newcommand{\benchmark}{Code-ORBench}
+\newcommand{\orr}{\mathrm{ORR}}
+
+\begin{document}
+
+\title{\benchmark: Measuring Over-Refusal in Code-Oriented LLM Assistance}
+
+\author{
+\IEEEauthorblockN{Anonymous Authors}
+\IEEEauthorblockA{
+Paper draft for IEEE conference format\\
+Affiliation omitted for review\\
+Email omitted for review}
+}
+
+\maketitle
+
+\begin{abstract}
+Safety-aligned large language models (LLMs) are expected to refuse harmful
+requests while still helping users with benign tasks. In code assistance, this
+boundary is especially difficult: harmless debugging, sandboxing, and defensive
+analysis tasks can contain surface forms associated with malware, exfiltration,
+or network abuse. Existing over-refusal benchmarks show that this problem is
+measurable in general-purpose text settings, but they do not directly stress the
+code-assistance scenarios in which safety-sensitive terminology is often
+legitimate. We introduce \benchmark, a code-oriented over-refusal benchmark built
+from controlled-risk rewrites of toxic code-domain seeds. The benchmark
+construction pipeline combines high-quality LLM rewriting, multi-model safety
+verification, and calibration-based filtering to retain prompts that are safe to
+answer yet likely to lie near model refusal boundaries. The current benchmark
+contains 392 prompts across six code-security categories. On nine evaluated
+models, over-refusal rates range from 4.59\% to 84.69\%, revealing substantial
+differences in helpfulness under safety-triggering code contexts. These results
+suggest that code-oriented over-refusal requires dedicated measurement rather
+than extrapolation from general safety benchmarks.
+\end{abstract}
+
+\begin{IEEEkeywords}
+large language models, over-refusal, code generation, safety alignment,
+benchmarking
+\end{IEEEkeywords}
+
+\section{Introduction}
+Modern LLM assistants are increasingly deployed for software engineering tasks,
+including debugging, testing, security review, and defensive analysis. These
+settings create a tension for safety alignment. On one hand, models should refuse
+requests that enable malware, credential theft, unauthorized access, or other
+harmful real-world actions. On the other hand, code-assistance models must still
+support benign tasks that discuss similar mechanisms in constrained, educational,
+or defensive contexts. A model that refuses too broadly may be safe in a narrow
+sense, but it becomes unreliable for legitimate engineering work.
+
+This failure mode is commonly referred to as over-refusal: a model rejects a
+request that should be answered. General-purpose studies such as OR-Bench
+\cite{cui2025orbench} and XSTest \cite{rottger2024xstest} demonstrate that
+over-refusal is a measurable property of aligned LLMs. However, code assistance
+has its own refusal boundary. Terms such as payload, beacon, sandbox,
+propagation, exfiltration, or ransomware can appear in legitimate code-analysis
+tasks, but they are also strongly associated with harmful cyber activity. A
+benchmark for code-oriented over-refusal should therefore be safe, technically
+plausible, and deliberately close to the surface forms that trigger safety
+filters.
+
+We propose \benchmark, a benchmark for measuring over-refusal in code-oriented
+LLM assistance. The central idea is to transform toxic code-domain seeds into
+benign, constrained prompts that preserve safety-triggering surface forms while
+removing real-world harmful effects. Rather than asking models to build malware,
+for example, prompts request sandbox-only replay, fixture-based detection,
+localhost simulation, blocked exfiltration analysis, or defensive test harnesses.
+The expected behavior is not indiscriminate compliance with harmful requests;
+the expected behavior is a useful answer to a benign programming task.
+
+This paper makes three contributions:
+\begin{itemize}
+    \item We design a code-oriented over-refusal construction pipeline that
+    combines LLM rewriting, multi-model safety verification, and refusal
+    potential calibration.
+    \item We release a fixed benchmark split of 392 safe prompts across six
+    security-related code categories, with construction metadata that separates
+    benchmark generation from target-model evaluation.
+    \item We evaluate nine LLMs and observe a wide over-refusal-rate range,
+    showing that the benchmark distinguishes model families and deployment
+    styles rather than producing uniformly zero or uniformly saturated refusal.
+\end{itemize}
+
+Unlike benchmarks that only ask whether a model refuses unsafe requests,
+\benchmark evaluates the complementary failure mode: whether a model can remain
+helpful when a safe code task contains terminology that resembles unsafe cyber
+requests. This framing is important for practical code assistants, because a
+defensive user often needs help with the vocabulary of the threat being
+analyzed.
+
+\section{Related Work}
+\subsection{Over-Refusal Benchmarks}
+OR-Bench \cite{cui2025orbench} introduced a large-scale benchmark for measuring
+over-refusal by rewriting harmful seeds into benign prompts and filtering them
+with model-based moderation. XSTest \cite{rottger2024xstest} studies exaggerated
+safety behaviors through hand-crafted safe and unsafe prompts. \benchmark is
+inspired by the same high-level objective, but focuses on code assistance and
+cybersecurity-adjacent programming tasks. This domain requires prompts that are
+both safe to fulfill and rich in code-specific safety triggers.
+
+OR-Bench was published in the ICML/PMLR format rather than an IEEE format. We
+therefore follow its benchmark methodology rather than its publication template:
+the present manuscript uses the IEEE conference class while adapting the
+rewrite-and-filter idea to code-oriented over-refusal.
+
+\subsection{Safety Evaluation and Refusal Judging}
+Prior safety benchmarks often measure whether models reject harmful prompts,
+whereas over-refusal benchmarks measure whether models unnecessarily reject safe
+prompts. This inversion makes label quality important: a benchmark prompt must be
+safe to answer before refusal can be counted as a failure. Our pipeline therefore
+uses safety verification before refusal-potential filtering, and the final metric
+counts only whether the target model refuses or makes a meaningful attempt to
+help.
+
+\subsection{Code Safety and Cyber Evaluation}
+Cybersecurity evaluation often focuses on harmful compliance: whether a model
+will provide operational instructions for attacks, malware, or unauthorized
+access. Code over-refusal is different. The benchmark prompt must be safe to
+answer, and refusal is an error only because the task is benign. This distinction
+motivates a two-stage construction process. Safety verification first removes
+prompts that might be unsafe to fulfill. Only after that do we measure whether
+models still refuse those safe prompts.
+
+\subsection{Relation to OR-Bench}
+We follow OR-Bench's core implementation pattern: start from harmful seeds,
+rewrite them into benign but refusal-prone prompts, moderate the generated
+prompts, evaluate multiple model families, and report refusal rates by category.
+The main adaptation is the domain. Instead of broad social and policy
+categories, \benchmark focuses on code-security tasks where surface risk terms
+are often necessary for legitimate defensive work. We also add a calibration
+stage that selects safe prompts with empirically mixed refusal behavior before
+freezing the benchmark split.
+
+\section{Benchmark Construction}
+Fig.~\ref{fig:pipeline} summarizes the construction process. In the current
+implementation, benchmark generation ends at Phase 03C. Target model inference
+and judging are downstream evaluation steps and do not modify the benchmark.
+
+\begin{figure}[t]
+    \centering
+    \fbox{\parbox{0.92\linewidth}{
+    \centering
+    01 seed ingestion $\rightarrow$ 02 controlled-risk rewrite $\rightarrow$
+    03A safety verification $\rightarrow$ 03B refusal-potential calibration
+    $\rightarrow$ 03C fixed benchmark split
+    }}
+    \caption{Construction pipeline for \benchmark. The benchmark is fixed after
+    03C; target-model evaluation is decoupled from dataset construction.}
+    \label{fig:pipeline}
+\end{figure}
+
+\subsection{Seed Ingestion}
+The pipeline starts from toxic code-domain seeds. These seeds are not used as
+benchmark prompts directly. They provide topical anchors for generating benign
+tasks that preserve safety-relevant terminology without preserving harmful
+intent. The current fixed split uses 120 seeds from six categories: spyware,
+network attacks, trojan horses, viruses, worms, and ransomware.
+
+\subsection{Controlled-Risk Rewriting}
+Phase 02 rewrites each seed into multiple benign code-assistance prompts. The
+rewriter is explicitly instructed to preserve surface risk terms while replacing
+real-world harmful effects with safety constraints such as localhost-only
+execution, synthetic fixtures, blocked I/O, toy data, offline simulation, or
+defensive validation. Each output record contains the rewritten prompt, risk
+terms, benign mechanism, safety constraints, expected safe solution outline, and
+forbidden real-world effects.
+
+The current generator pool uses \texttt{gpt-5.4} and
+\texttt{qwen3-30b-a3b-instruct-2507}. This pairing was selected because the
+former produced high-quality boundary-aware rewrites, while the latter preserved
+more diverse surface forms that tend to trigger refusal behavior. Five candidate
+prompts are generated per seed.
+
+Table~\ref{tab:families} summarizes the prompt families used by the rewrite
+templates. Each family keeps a realistic code-security surface form while
+constraining the task to synthetic, offline, or defensive behavior.
+
+\begin{table*}[t]
+\centering
+\caption{Prompt families used to transform toxic seeds into benign code tasks.}
+\label{tab:families}
+\begin{tabular}{p{0.22\textwidth}p{0.32\textwidth}p{0.36\textwidth}}
+\toprule
+Prompt family & Benign mechanism & Forbidden real-world effect \\
+\midrule
+Blocked exfiltration replay & Analyze synthetic fixture data and demonstrate
+blocked I/O or redaction logic. & Credential theft, secret collection, or data
+exfiltration from real systems. \\
+Localhost C2 beacon replay & Simulate local-only request parsing or detection
+logic with toy endpoints. & Command-and-control infrastructure, persistence, or
+remote execution. \\
+Dry-run backdoor installer & Build a dry-run detector or audit script over toy
+files. & Installing persistence, evasion, or unauthorized access paths. \\
+Fixture file infector replay & Inspect synthetic file mutations or write
+defensive tests. & Infecting real files or propagating executable payloads. \\
+Bounded propagation simulator & Model propagation as an offline graph or
+sandboxed toy process. & Network scanning, exploitation, or uncontrolled
+spread. \\
+Sandboxed payload replay & Parse or neutralize inert payload-shaped strings in
+a local fixture. & Weaponization, deployment, or execution against real
+targets. \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Safety Verification}
+Phase 03A checks whether each rewritten prompt is safe to fulfill. Four verifier
+models are used: \texttt{gpt-5.2}, \texttt{gemini-2.5-pro},
+\texttt{claude-sonnet-4-6-thinking}, and
+\texttt{deepseek-v3.2-thinking}. A prompt passes if at least three of four
+verifiers classify it as safe to fulfill. Prompts judged unsafe, invalid, or in
+need of repair are excluded before any over-refusal evaluation.
+
+\subsection{Refusal-Potential Calibration}
+Phase 03B estimates whether a safe prompt is near a refusal boundary. Three
+calibration models answer each prompt:
+\texttt{gpt-4o-mini}, \texttt{qwen3-30b-a3b-instruct-2507}, and
+\texttt{gemini-3-flash-preview}. The system retries invalid or empty responses
+and requires all three calibration responses to be valid. A candidate is retained
+when calibration produces mixed behavior: at least one calibration model refuses
+and at least one calibration model does not refuse. This rule favors boundary
+cases and avoids prompts that are either too easy or uniformly refused.
+
+\subsection{Final Selection}
+Phase 03C deduplicates and freezes all calibrated records. We do not impose a
+fixed target size or category quota. The final benchmark size is therefore
+determined by the calibrated, deduplicated pool. For the current fixed split,
+this yields 392 prompts.
+
+Following OR-Bench's separation between a broad benchmark and harder subsets,
+our current release should be interpreted as a compact boundary-focused split.
+It is not intended to approximate the natural frequency of code-security
+requests. Instead, it intentionally concentrates on benign prompts that are close
+to the safety boundary and therefore useful for comparing over-refusal.
+
+\begin{table}[t]
+\centering
+\caption{Construction counts for the fixed \benchmark split.}
+\label{tab:construction}
+\begin{tabular}{lr}
+\toprule
+Stage & Count \\
+\midrule
+Seeds & 120 \\
+Rewrite candidates & 600 \\
+03A safe candidates & 599 \\
+03A rejected candidates & 1 \\
+03B calibrated records & 392 \\
+03B rejected records & 206 \\
+03B incomplete records & 1 \\
+03C selected records & 392 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Category distribution of the fixed benchmark split.}
+\label{tab:categories}
+\begin{tabular}{lr}
+\toprule
+Category & Prompts \\
+\midrule
+Spyware & 112 \\
+Network attacks & 87 \\
+Trojan horses & 70 \\
+Viruses & 60 \\
+Worms & 36 \\
+Ransomware & 27 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Evaluation Protocol}
+\subsection{Target Models}
+The current completed run evaluates nine models spanning OpenAI, Qwen, Gemini,
+and Claude families:
+\texttt{gpt-4o-mini}, \texttt{gpt-4o}, \texttt{qwen3-14b},
+\texttt{qwen3-30b-a3b-instruct-2507},
+\texttt{qwen3-235b-a22b-instruct-2507},
+\texttt{qwen3-235b-a22b-thinking-2507}, \texttt{qwen3-coder-plus},
+\texttt{gemini-3-flash-preview}, and
+\texttt{claude-haiku-4-5-20251001}. Models that overlap with calibration are
+reported but should be interpreted separately from held-out target models. In
+the next evaluation round, we follow OR-Bench's family-coverage design and expand
+the panel to at least three models from each major family, including GPT,
+Claude, Gemini, Qwen, DeepSeek, Llama, and Mistral.
+
+\subsection{Refusal Metric}
+The final metric is over-refusal rate (ORR):
+\begin{equation}
+    \orr = \frac{\#\mathrm{REFUSAL}}
+    {\#\mathrm{REFUSAL} + \#\mathrm{NON\_REFUSAL}}.
+\end{equation}
+We use a binary fulfillment/refusal standard. A response is counted as
+\textsc{Refusal} if it rejects the request, avoids the core programming task,
+provides only generic safety guidance, or fails to offer meaningful technical
+help. A response is counted as \textsc{Non-Refusal} only if it makes a relevant
+attempt to answer with code, logic, testing steps, or actionable technical
+analysis. Safety or harmfulness is not judged at this stage; safety was already
+checked during benchmark construction.
+
+\subsection{LLM Judge}
+All final responses are judged with an LLM-based binary judge using
+\texttt{gpt-5.2}. LLM-as-a-judge evaluation is widely used for open-ended model
+assessment, but it can introduce systematic bias \cite{zheng2023judging}; we
+therefore use a constrained binary rubric rather than an open-ended score. The
+judge outputs one of \textsc{Refusal},
+\textsc{Non-Refusal}, or an engineering invalid/error label. Invalid and error
+labels are excluded from the ORR denominator. In the current run, all nine models
+produce 392 valid target responses and 392 valid judge labels.
+
+\section{Results}
+Table~\ref{tab:orr} reports the overall ORR for each model. The benchmark
+produces a broad refusal-rate spectrum. The lowest observed ORR is 4.59\%, while
+the highest is 84.69\%. This spread indicates that the prompts are neither
+trivially answerable by all models nor uniformly rejected.
+
+Fig.~\ref{fig:overall_orr} visualizes the overall model ranking, and
+Fig.~\ref{fig:category_heatmap} shows that category-level refusal behavior is
+not uniform across models.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\linewidth]{figures/overall_orr.pdf}
+    \caption{Overall over-refusal rate on the fixed \benchmark split.}
+    \label{fig:overall_orr}
+\end{figure}
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=0.86\textwidth]{figures/category_heatmap.pdf}
+    \caption{Category-level over-refusal rates. Values are percentages.}
+    \label{fig:category_heatmap}
+\end{figure*}
+
+\begin{table*}[t]
+\centering
+\caption{Overall over-refusal rate on the fixed 392-prompt \benchmark split.}
+\label{tab:orr}
+\scriptsize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lrrrrr}
+\toprule
+Model & Valid & ORR & Refusal & Non-refusal & Invalid/Error \\
+\midrule
+\texttt{qwen3-14b} & 392 & 4.59\% & 18 & 374 & 0 \\
+\texttt{claude-haiku-4-5-20251001} & 392 & 15.82\% & 62 & 330 & 0 \\
+\texttt{gemini-3-flash-preview} & 392 & 17.86\% & 70 & 322 & 0 \\
+\texttt{gpt-4o} & 392 & 20.66\% & 81 & 311 & 0 \\
+\texttt{qwen3-30b-a3b-instruct-2507} & 392 & 39.29\% & 154 & 238 & 0 \\
+\texttt{qwen3-235b-a22b-instruct-2507} & 392 & 76.28\% & 299 & 93 & 0 \\
+\texttt{qwen3-coder-plus} & 392 & 77.30\% & 303 & 89 & 0 \\
+\texttt{qwen3-235b-a22b-thinking-2507} & 392 & 77.55\% & 304 & 88 & 0 \\
+\texttt{gpt-4o-mini} & 392 & 84.69\% & 332 & 60 & 0 \\
+\bottomrule
+\end{tabular}
+}
+\end{table*}
+
+\subsection{Model Differences}
+The results reveal substantial differences among models that would be obscured
+by a benchmark with uniformly low refusal rates. \texttt{qwen3-14b} rarely
+refuses, while \texttt{gpt-4o-mini} and several larger Qwen variants refuse most
+prompts. \texttt{gpt-4o}, \texttt{gemini-3-flash-preview}, and
+\texttt{claude-haiku-4-5-20251001} occupy a lower-to-middle refusal range.
+
+\subsection{Category Effects}
+Refusal rates vary by category. For example, some high-refusal models reach
+100\% ORR on trojan-horse prompts, while \texttt{gpt-4o} reaches 0\% ORR on
+virus prompts. These category-level differences suggest that surface risk terms
+and code-task framing interact strongly with model safety policies.
+
+\subsection{Qualitative Analysis}
+Manual inspection suggests that refusals usually arise from surface-trigger
+terms rather than from genuinely unsafe prompt intent. Common refusal triggers
+include payload, beacon, exfiltration, backdoor, propagation, and file infection,
+even when the prompt explicitly restricts the task to synthetic fixtures,
+localhost-only simulation, or defensive tests. Non-refusal responses typically
+acknowledge the safety boundary and then provide bounded code, parsing logic,
+unit tests, or offline analysis steps. This mirrors the qualitative pattern
+reported by OR-Bench: harder over-refusal prompts often contain stronger wording
+that is not itself unsafe once the full semantic context is considered.
+
+\subsection{Calibration-Overlap Models}
+Three target models also appear in the calibration pool:
+\texttt{gpt-4o-mini}, \texttt{qwen3-30b-a3b-instruct-2507}, and
+\texttt{gemini-3-flash-preview}. We keep them in the table because they are
+useful diagnostics for the calibration boundary. However, conclusions about
+generalization should primarily emphasize held-out target models that were not
+used to select the benchmark split.
+
+\section{Design Validation}
+\subsection{Safety Filtering}
+The 03A verifier stage rejected only one of 600 generated candidates, leaving
+599 safe candidates. This high pass rate indicates that the controlled-risk
+rewriter generally succeeded at converting toxic seeds into benign code tasks
+rather than producing harmful requests. The rejected candidate is still useful as
+an engineering signal: safety verification remains necessary even when the
+rewriter is strongly constrained.
+
+\subsection{Boundary Filtering}
+Among the 599 safe candidates, 392 passed refusal-potential calibration, 206 were
+rejected by the calibration rule, and one candidate was excluded for incomplete
+calibration evidence. The retained prompts all had valid responses from the
+three calibration models and exhibited mixed refusal behavior. This filtering is
+the main reason the final benchmark avoids the initial failure mode in which
+most non-GPT models had near-zero refusal rates.
+
+\subsection{Fixed-Size Selection Ablation}
+We also tested whether an additional fixed-size selection step was necessary
+after calibration. A pilot comparison between a fixed 50-prompt subset and the
+full calibrated pool showed that the model ranking and refusal-rate gradient
+remained visible without compressing the dataset. The final pipeline therefore
+keeps all deduplicated calibrated prompts instead of forcing an arbitrary target
+size.
+
+\section{Discussion}
+\subsection{Why Calibration Is Needed}
+Early pilot runs showed that safe code prompts could be too easy for many
+models, leading to near-zero over-refusal outside a few GPT-style systems.
+Calibration addresses this by selecting prompts that empirically produce mixed
+behavior across calibration models. This does not use the final target panel to
+optimize the benchmark split; instead, it uses a small, fixed calibration pool to
+identify boundary-like prompts before target evaluation.
+
+\subsection{Benchmark and Evaluation Decoupling}
+The benchmark is fixed after 03C. Additional target models can be evaluated later
+without changing the dataset. If new target-model results are used to revise
+prompts or thresholds, that would constitute a new benchmark version rather than
+an extension of the current fixed split.
+
+\subsection{Limitations}
+\benchmark currently focuses on six cybersecurity-adjacent code categories. It
+does not claim to cover all software engineering tasks or all possible safety
+boundaries. Unlike OR-Bench, the current release does not include a separate
+toxic-prompt evaluation split; it focuses on the over-refusal side of the
+trade-off while using toxic seeds only as construction anchors. The final judge
+is LLM-based, which improves semantic coverage over keyword matching but may
+introduce judge-model bias. Some reported target models also overlap with
+calibration models; these results are useful diagnostics, but held-out models
+should be emphasized in primary comparisons.
+
+\subsection{Reproducibility}
+The implementation is organized as a six-phase pipeline. Scripts 01--03C create
+the benchmark; scripts 04--06 evaluate target models and summarize ORR. The
+fixed dataset is stored as \texttt{dataset/full\_all/03c\_selected\_records.jsonl}.
+The final metric report is stored as
+\texttt{dataset/full\_all/06\_metrics\_report.md}. This separation makes it
+possible to add target models without changing the benchmark split.
+
+\section{Ethical Considerations}
+The benchmark is designed to measure over-refusal on prompts that are safe to
+fulfill. Prompt construction explicitly removes real-world harmful effects and
+adds constraints such as sandboxed execution, synthetic fixtures, blocked I/O,
+and defensive analysis. We avoid publishing operational harmful instructions in
+the paper. The goal is to improve the balance between safety and helpfulness in
+code assistance, not to increase model compliance with harmful requests.
+
+\section{Conclusion}
+We introduced \benchmark, a code-oriented over-refusal benchmark built from
+controlled-risk rewrites and filtered through safety verification and
+refusal-potential calibration. The fixed 392-prompt benchmark produces a wide
+range of ORR values across nine evaluated models, demonstrating that
+code-oriented over-refusal is measurable and model-dependent. Future work can
+extend the benchmark to additional software domains, human-audited judging, and
+longitudinal tracking of safety-policy drift.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}
