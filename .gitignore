@@ -1,0 +1,17 @@
+dataset/
+.waylog/
+
+*.aux
+*.bbl
+*.blg
+*.out
+*.log
+*.zip
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.DS_Store
+*.swp
+*.swo
